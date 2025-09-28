@@ -26,14 +26,14 @@ if not CHAT_ID:
     raise ValueError("CHAT_ID environment variable is required")
 
 # Optimization Parameters
-BATCH_SIZE = 20
-PARALLEL_REQUESTS = 10
+BATCH_SIZE = 10  # Reduced for Render free tier
+PARALLEL_REQUESTS = 5
 MESSAGE_DELAY = 1
 RETRY_MAX_ATTEMPTS = 3
 
-# Monitoring Parameters
-CHECK_INTERVAL = 1  # Check every 2 seconds
-NOTIFICATION_INTERVAL = 7200  # Notify every 2 hours (7200 seconds)
+# Monitoring Parameters - Increased for Render free tier
+CHECK_INTERVAL = 30  # Check every 30 seconds to save resources
+NOTIFICATION_INTERVAL = 7200  # Notify every 2 hours
 
 # Logging Setup
 logging.basicConfig(
@@ -42,12 +42,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Global variables
-monitor_task = None
-
 def clean_registration_number(reg_no):
     """Ultra-fast validation"""
-    return reg_no.strip() if len(reg_no.strip()) == 11 and reg_no.strip().isdigit() else ""
+    cleaned = reg_no.strip()
+    return cleaned if len(cleaned) == 11 and cleaned.isdigit() else ""
 
 async def fetch_result_html(session, reg_no):
     """Async fetch with connection reuse"""
@@ -137,7 +135,7 @@ async def process_registration_file(bot):
             batch = reg_nos[i:i + BATCH_SIZE]
             successful = await process_batch(bot, session, batch)
             all_successful.extend(successful)
-            await asyncio.sleep(1)  # Brief pause between batches
+            await asyncio.sleep(2)  # Brief pause between batches
 
         await send_telegram_message(
             bot,
@@ -146,11 +144,12 @@ async def process_registration_file(bot):
         )
 
 async def monitor_website():
+    """Website monitoring task"""
     bot = Bot(token=BOT_TOKEN)
     last_notification_time = 0
     is_first_check = True
 
-    await send_telegram_message(bot, "🔍 Monitoring started (checks every 2 seconds)...")
+    await send_telegram_message(bot, f"🔍 Monitoring started (checks every {CHECK_INTERVAL} seconds)...")
 
     async with aiohttp.ClientSession() as session:
         while True:
@@ -182,55 +181,69 @@ async def monitor_website():
             await asyncio.sleep(CHECK_INTERVAL)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /start command"""
     await update.message.reply_text(
         "⚡ Turbo Results Bot\n\n"
-        "Send registration numbers (1 per line) or /batch to process file"
+        "Monitoring website for results availability.\n"
+        "Use /batch to manually process registration numbers."
     )
 
 async def handle_batch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /batch command"""
     if str(update.effective_chat.id) != CHAT_ID:
         await update.message.reply_text("❌ Unauthorized")
         return
 
+    await update.message.reply_text("🔄 Starting batch processing...")
     bot = context.bot
     await process_registration_file(bot)
 
 async def start_monitoring():
     """Start the monitoring task"""
-    global monitor_task
-    if monitor_task is None or monitor_task.done():
-        monitor_task = asyncio.create_task(monitor_website())
-        logger.info("Monitoring task started")
+    asyncio.create_task(monitor_website())
+    logger.info("Monitoring task started")
 
 async def main():
+    """Main application entry point"""
+    logger.info("Starting Results Monitor Bot...")
+    
+    # Create application instance
+    application = Application.builder().token(BOT_TOKEN).build()
+    
+    # Add handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("batch", handle_batch))
+    
+    # Send startup message
+    bot = Bot(token=BOT_TOKEN)
+    await send_telegram_message(bot, "🚀 Bot deployed and running on Render!")
+    
     # Start monitoring
     await start_monitoring()
     
-    # Start the Telegram bot
-    application = Application.builder().token(BOT_TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("batch", handle_batch))
-
-    logger.info("Bot starting...")
+    # Start the bot
+    logger.info("Starting bot polling...")
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
     
-    # For Render, we need to handle webhook or polling based on environment
-    if os.getenv('RENDER'):
-        # Webhook for production
-        webhook_url = f"https://{os.getenv('RENDER_SERVICE_NAME')}.onrender.com"
-        await application.bot.set_webhook(webhook_url)
-        logger.info(f"Webhook set to: {webhook_url}")
-    else:
-        # Polling for development
-        await application.initialize()
-        await application.start()
-        await application.updater.start_polling()
-        logger.info("Bot started with polling")
-
     logger.info("✅ Bot is fully operational!")
-    await send_telegram_message(Bot(token=BOT_TOKEN), "🚀 Bot deployed and running!")
-
-    # Keep running forever
-    await asyncio.Future()
+    
+    # Keep the application running
+    try:
+        while True:
+            await asyncio.sleep(3600)  # Sleep for 1 hour
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    finally:
+        await application.stop()
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    # Set event loop policy for better async support
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Application stopped")
+    except Exception as e:
+        logger.error(f"Application failed: {e}")
+        raise
