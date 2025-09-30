@@ -10,7 +10,7 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-URL = os.getenv("URL")
+URL = 'https://results.beup.ac.in/BTech5thSem2024_B2022Results.aspx'
 
 # Settings
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 2))       # 2 Seconds
@@ -28,6 +28,8 @@ RESULT_URLS = [
     "https://results.beup.ac.in/ResultsBTech5thSem2024_B2022Pub.aspx?Sem=V&RegNo=22101148008"
 ]
 
+if not BOT_TOKEN:
+    raise ValueError("❌ BOT_TOKEN is not set! Please configure Railway environment variables.")
 
 class Monitor:
     def __init__(self):
